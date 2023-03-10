@@ -19,10 +19,10 @@ public class GHJOperator extends JoinOperator {
     private Run joinedRecords;
 
     public GHJOperator(QueryOperator leftSource,
-                       QueryOperator rightSource,
-                       String leftColumnName,
-                       String rightColumnName,
-                       TransactionContext transaction) {
+            QueryOperator rightSource,
+            String leftColumnName,
+            String rightColumnName,
+            TransactionContext transaction) {
         super(leftSource, rightSource, leftColumnName, rightColumnName, transaction, JoinType.GHJ);
         this.numBuffers = transaction.getWorkMemSize();
         this.stats = this.estimateStats();
@@ -37,7 +37,9 @@ public class GHJOperator extends JoinOperator {
     }
 
     @Override
-    public boolean materialized() { return true; }
+    public boolean materialized() {
+        return true;
+    }
 
     @Override
     public BacktrackingIterator<Record> backtrackingIterator() {
@@ -47,7 +49,8 @@ public class GHJOperator extends JoinOperator {
             // and return an iterator over it once the algorithm completes
             this.joinedRecords = new Run(getTransaction(), getSchema());
             this.run(getLeftSource(), getRightSource(), 1);
-        };
+        }
+        ;
         return joinedRecords.iterator();
     }
 
@@ -62,15 +65,26 @@ public class GHJOperator extends JoinOperator {
      * partitions.
      *
      * @param partitions an array of partitions to split the records into
-     * @param records iterable of records we want to partition
-     * @param left true if records are from the left relation, otherwise false
-     * @param pass the current pass (used to pick a hash function)
+     * @param records    iterable of records we want to partition
+     * @param left       true if records are from the left relation, otherwise false
+     * @param pass       the current pass (used to pick a hash function)
      */
     private void partition(Partition[] partitions, Iterable<Record> records, boolean left, int pass) {
         // TODO(proj3_part1): implement the partitioning logic
         // You may find the implementation in SHJOperator.java to be a good
         // starting point. You can use the static method HashFunc.hashDataBox
         // to get a hash value.
+        int index;
+        index = (left) ? getLeftColumnIndex() : getRightColumnIndex();
+        for (Record record : records) {
+            DataBox columnValue = record.getValue(index);
+            int hash = HashFunc.hashDataBox(columnValue, pass);
+            int partitionNum = hash % partitions.length;
+            if (partitionNum < 0) {
+                partitionNum += partitions.length;
+            }
+            partitions[partitionNum].add(record);
+        }
         return;
     }
 
@@ -104,14 +118,32 @@ public class GHJOperator extends JoinOperator {
             probeFirst = true;
         } else {
             throw new IllegalArgumentException(
-                "Neither the left nor the right records in this partition " +
-                "fit in B-2 pages of memory."
-            );
+                    "Neither the left nor the right records in this partition " +
+                            "fit in B-2 pages of memory.");
         }
         // TODO(proj3_part1): implement the building and probing stage
         // You shouldn't refer to any variable starting with "left" or "right"
         // here, use the "build" and "probe" variables we set up for you.
         // Check out how SHJOperator implements this function if you feel stuck.
+        Map<DataBox, List<Record>> hashTable = new HashMap<>();
+        for (Record brecord : buildRecords) {
+            DataBox buildJoinValue = brecord.getValue(buildColumnIndex);
+            if (!hashTable.containsKey(buildJoinValue)) {
+                hashTable.put(buildJoinValue, new ArrayList<>());
+            }
+            hashTable.get(buildJoinValue).add(brecord);
+        }
+
+        // Probe Stage
+        for (Record precord : probeRecords) {
+            DataBox probeJoinValue = precord.getValue(probeColumnIndex);
+            if (!hashTable.containsKey(probeJoinValue))
+                continue;
+            for (Record brecord : hashTable.get(probeJoinValue)) {
+                Record joinedRecord = brecord.concat(precord);
+                this.joinedRecords.add(joinedRecord);
+            }
+        }
     }
 
     /**
@@ -122,7 +154,8 @@ public class GHJOperator extends JoinOperator {
      */
     private void run(Iterable<Record> leftRecords, Iterable<Record> rightRecords, int pass) {
         assert pass >= 1;
-        if (pass > 5) throw new IllegalStateException("Reached the max number of passes");
+        if (pass > 5)
+            throw new IllegalStateException("Reached the max number of passes");
 
         // Create empty partitions
         Partition[] leftPartitions = createPartitions(true);
@@ -136,6 +169,13 @@ public class GHJOperator extends JoinOperator {
             // TODO(proj3_part1): implement the rest of grace hash join
             // If you meet the conditions to run the build and probe you should
             // do so immediately. Otherwise you should make a recursive call.
+            if (leftPartitions[i].getNumPages() <= this.numBuffers - 2
+                    || rightPartitions[i].getNumPages() <= this.numBuffers - 2) {
+                buildAndProbe(leftPartitions[i], rightPartitions[i]);
+            } else {
+                this.run(leftPartitions[i],
+                        rightPartitions[i], pass + 1);
+            }
         }
     }
 
@@ -159,13 +199,15 @@ public class GHJOperator extends JoinOperator {
     /**
      * Creates either a regular partition or a smart partition depending on the
      * value of this.useSmartPartition.
+     * 
      * @param left true if this partition will store records from the left
      *             relation, false otherwise
      * @return a partition to store records from the specified partition
      */
     private Partition createPartition(boolean left) {
         Schema schema = getRightSource().getSchema();
-        if (left) schema = getLeftSource().getSchema();
+        if (left)
+            schema = getLeftSource().getSchema();
         return new Partition(getTransaction(), schema);
     }
 
@@ -203,6 +245,19 @@ public class GHJOperator extends JoinOperator {
 
         // TODO(proj3_part1): populate leftRecords and rightRecords such that
         // SHJ breaks when trying to join them but not GHJ
+        for (int i = 0; i < 24; i++) {
+            leftRecords.add(createRecord(1));
+            leftRecords.add(createRecord(6));
+            leftRecords.add(createRecord(11));
+            leftRecords.add(createRecord(16));
+        }
+        /**
+         * for (int i = 0; i < 24; i++) {
+         * leftRecords.add(createRecord(6));
+         * rightRecords.add(createRecord(6));
+         * }
+         */
+
         return new Pair<>(leftRecords, rightRecords);
     }
 
@@ -223,8 +278,15 @@ public class GHJOperator extends JoinOperator {
         ArrayList<Record> leftRecords = new ArrayList<>();
         ArrayList<Record> rightRecords = new ArrayList<>();
         // TODO(proj3_part1): populate leftRecords and rightRecords such that GHJ breaks
+        for (int i = 0; i < 50; i++) {
+            leftRecords.add(createRecord(1));
+            rightRecords.add(createRecord(1));
+        }
 
+        for (int i = 0; i < 50; i++) {
+            leftRecords.add(createRecord(6));
+            rightRecords.add(createRecord(6));
+        }
         return new Pair<>(leftRecords, rightRecords);
     }
 }
-

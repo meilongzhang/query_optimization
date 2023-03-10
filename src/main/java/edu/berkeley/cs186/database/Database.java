@@ -38,6 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Phaser;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
+import edu.berkeley.cs186.database.table.Record;
 
 /**
  * Database objects keeps track of transactions, tables, and indices
